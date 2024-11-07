@@ -9,7 +9,7 @@ use hyper::{
   Request, Response,
 };
 use hyper_util::rt::TokioIo;
-use log::{debug, info};
+use log::{debug, error, info};
 use mime_guess::MimeGuess;
 use tokio::net::TcpListener;
 
@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         )
         .await
       {
-        eprintln!("Error serving connection: {:?}", err);
+        error!("Error serving connection: {:?}", err);
       }
     });
   }
@@ -57,7 +57,7 @@ async fn serve_file(req: Request<Incoming>, adir: Arc<String>) -> Result<Respons
   let path = req.uri().path();
   // check if path contains ".." to prevent directory traversal
   if path.contains("..") {
-    eprintln!("Invalid path: {}", path);
+    error!("Invalid path: {}", path);
     return Ok(Response::builder().status(400).body(Full::new(Bytes::from("400 Bad Request"))).unwrap());
   }
   let directory = &adir;
@@ -65,7 +65,7 @@ async fn serve_file(req: Request<Incoming>, adir: Arc<String>) -> Result<Respons
   let file = match tokio::fs::read(file_path).await {
     Ok(file) => file,
     Err(_) => {
-      eprintln!("File not found: {}", path);
+      error!("File not found: {}", path);
       return Ok(Response::builder().status(404).body(Full::new(Bytes::from("404 Not Found"))).unwrap());
     }
   };
