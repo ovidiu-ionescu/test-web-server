@@ -1,5 +1,5 @@
 use clap::Parser;
-use std::{convert::Infallible, sync::Arc};
+use std::{collections::HashSet, convert::Infallible, sync::Arc};
 
 use http_body_util::Full;
 use hyper::{
@@ -19,6 +19,16 @@ struct Args {
   address: String,
   #[arg(short, long, default_value = "Public", help = "Directory to serve files from")]
   dir: String,
+  #[arg(short, long, default_value = "index.html", help = "Default file to serve")]
+  index: String,
+  #[arg(num_args = 0.., short, long, help = "Paths equivalent to /index.html")]
+  paths: Vec<String>,
+}
+
+struct Config {
+  dir: String,
+  index: String,
+  paths: HashSet<String>,
 }
 
 #[tokio::main]
@@ -29,7 +39,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
   let listener = TcpListener::bind(&addr).await?;
   info!("Listening on: 「{}」, serving files from 「{}」", addr, &args.dir);
 
-  let config = Arc::new(args.dir.clone());
+  let config = Config { dir: args.dir.clone(), index: args.index.clone(), paths: list_to_set(args.paths) };
+
+  let config = Arc::new(config);
 
   loop {
     let (stream, _) = listener.accept().await?;
@@ -53,15 +65,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
   }
 }
 
-async fn serve_file(req: Request<Incoming>, adir: Arc<String>) -> Result<Response<Full<Bytes>>, Infallible> {
-  let path = req.uri().path();
+fn list_to_set(list: Vec<String>) -> HashSet<String> {
+  let mut set: HashSet<String> = list.into_iter().map(|s| if s.starts_with('/') { s } else { format!("/{}", s) }).collect();
+  set.insert("/".to_string());
+  set
+}
+
+async fn serve_file(req: Request<Incoming>, a_config: Arc<Config>) -> Result<Response<Full<Bytes>>, Infallible> {
+  let mut path = req.uri().path();
+  info!("Request: {}", path);
   // check if path contains ".." to prevent directory traversal
   if path.contains("..") {
     error!("Invalid path: {}", path);
     return Ok(Response::builder().status(400).body(Full::new(Bytes::from("400 Bad Request"))).unwrap());
   }
-  let directory = &adir;
-  let file_path = format!("{}/{}", directory, path);
+  let config = &a_config;
+  path = if config.paths.contains(path) { config.index.as_str() } else { path };
+  let file_path = format!("{}/{}", config.dir, path);
   let file = match tokio::fs::read(file_path).await {
     Ok(file) => file,
     Err(_) => {
